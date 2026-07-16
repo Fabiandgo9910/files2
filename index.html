@@ -534,6 +534,8 @@
       box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
       border-left: 4px solid var(--accent);
       animation: toast-in 0.25s ease;
+      cursor: pointer;
+      /* Indica que se puede hacer clic para descartar */
     }
 
     .toast strong {
@@ -751,8 +753,7 @@
     }
 
     /* ============================================================
-       SINTETIZADOR DE SONIDO (MELODÍA DE ALERTA)
-       Genera una agradable secuencia de campanas usando la Web Audio API.
+       SINTETIZADOR DE SONIDO (ALARMA RUIDOSA Y REPETITIVA)
        ============================================================ */
     function playReminderSound() {
       try {
@@ -760,30 +761,54 @@
         if (!AudioContext) return;
         const ctx = new AudioContext();
 
-        // Secuencia de notas agradables (chime retro: Do5 -> Mi5 -> Sol5 -> Do6)
-        const notesFreqs = [523.25, 659.25, 783.99, 1046.50];
-        const duration = 0.3;
-
-        notesFreqs.forEach((freq, idx) => {
-          const startTime = ctx.currentTime + idx * 0.12;
+        // Alarma estridente tipo zumbador (Ondas sawtooth de volumen alto)
+        const duration = 0.15;
+        const playBeep = (delay, freq) => {
+          const startTime = ctx.currentTime + delay;
           const osc = ctx.createOscillator();
           const gainNode = ctx.createGain();
 
-          osc.type = 'triangle'; // Sonido dulce y orgánico
+          osc.type = 'sawtooth';
           osc.frequency.setValueAtTime(freq, startTime);
 
-          // Desvanecimiento suave para que suene como campana
-          gainNode.gain.setValueAtTime(0.15, startTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+          gainNode.gain.setValueAtTime(0.4, startTime); // Sube el volumen considerablemente
+          gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
 
           osc.connect(gainNode);
           gainNode.connect(ctx.destination);
 
           osc.start(startTime);
           osc.stop(startTime + duration);
-        });
+        };
+
+        // Secuencia intermitente de alerta rápida de tonos altos y bajos (tres beeps dobles)
+        playBeep(0.0, 950);
+        playBeep(0.1, 750);
+
+        playBeep(0.3, 950);
+        playBeep(0.4, 750);
+
+        playBeep(0.6, 950);
+        playBeep(0.7, 750);
+
       } catch (e) {
-        console.warn("La reproducción de sonido fue bloqueada o no es soportada por el navegador:", e);
+        console.warn("La reproducción de sonido fue bloqueada o no es soportada:", e);
+      }
+    }
+
+    /* ============================================================
+       SINTETIZADOR DE VOZ (TEXT-TO-SPEECH)
+       ============================================================ */
+    function speakReminderText() {
+      if ('speechSynthesis' in window) {
+        // Cancela cualquier locución previa activa para evitar solapamientos
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance("Tienes una nota pendiente de leer");
+        utterance.lang = 'es-ES';
+        utterance.rate = 0.95; // Velocidad ligeramente pausada para claridad
+        utterance.pitch = 1.0;
+        window.speechSynthesis.speak(utterance);
       }
     }
 
@@ -1045,13 +1070,29 @@
       const label = note.title || note.content.slice(0, 40);
       const when = minutes >= 60 ? '1 hora' : `${minutes} min`;
 
-      // 1. Reproducir la sutil melodía
+      // 1. Alarma ruidosa
       playReminderSound();
 
-      // 2. Notificación en Toast (Esquina superior derecha)
+      // 2. Lee el texto solicitado por voz
+      speakReminderText();
+
+      // 3. Notificación en Toast de pantalla (persiste si estás fuera de la pestaña)
       showToast(label, when);
 
-      // 3. Alerta Modal del sistema (No bloqueante de ventana, con el nuevo diseño)
+      // 4. Notificación Nativa de escritorio (para alertar al usuario si está en otra app o pestaña)
+      if (document.visibilityState !== 'visible' && 'Notification' in window && Notification.permission === 'granted') {
+        const nativeNotify = new Notification('⏰ Tienes una nota pendiente de leer', {
+          body: `La nota "${label}" vence en ${when}.`,
+          icon: '/favicon.png',
+          requireInteraction: true // <--- Hace que no desaparezca en Windows/Mac/Linux hasta interactuar
+        });
+        nativeNotify.onclick = () => {
+          window.focus();
+          nativeNotify.close();
+        };
+      }
+
+      // 5. Alerta Modal clásica rediseñada
       await systemAlert('⏰ Recordatorio próximo', `La nota "${label}" vence en aproximadamente ${when}.`);
     }
 
@@ -1059,19 +1100,44 @@
       const stack = document.getElementById('toast-stack');
       const toast = document.createElement('div');
       toast.className = 'toast';
-      toast.innerHTML = `<strong>⏰ Vence en ${when}</strong>${escapeHtml(label)}`;
+      toast.innerHTML = `<strong>⏰ Vence en ${when}</strong>${escapeHtml(label)}<br><small style="font-size:0.7rem; opacity:0.75;">(Clic para cerrar)</small>`;
+
+      // El usuario puede hacer clic para cerrarlo en cualquier momento
+      toast.addEventListener('click', () => toast.remove());
       stack.appendChild(toast);
-      setTimeout(() => toast.remove(), 8000);
+
+      // Persistencia inteligente: si la pestaña está oculta, el toast NO se autodestruye.
+      // Esperará a que abras de nuevo la pestaña para contar los 10 segundos antes de borrarse.
+      const startDismissTimer = () => {
+        setTimeout(() => {
+          if (toast.parentNode) toast.remove();
+        }, 10000);
+      };
+
+      if (document.visibilityState === 'visible') {
+        startDismissTimer();
+      } else {
+        const onFocusBack = () => {
+          if (document.visibilityState === 'visible') {
+            startDismissTimer();
+            document.removeEventListener('visibilitychange', onFocusBack);
+          }
+        };
+        document.addEventListener('visibilitychange', onFocusBack);
+      }
     }
 
     setInterval(render, 60 * 1000);
 
-    /* ============================================================
-       ARRANQUE
-       ============================================================ */
     async function init() {
       const board = document.getElementById('board');
       board.innerHTML = `<div class="empty-state"><span>Cargando pizarra…</span></div>`;
+
+      // Solicitar permisos de notificación nativos
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+
       try {
         notes = await apiGetNotes();
         render();
@@ -1079,11 +1145,15 @@
         setInterval(checkReminders, CHECK_INTERVAL_MS);
       } catch (err) {
         console.error(err);
-        board.innerHTML = `<div class="empty-state"><span>No se pudo conectar con el servidor</span>Comprueba tu conexión y recarga la página.</div>`;
+        board.innerHTML = `
+      <div class="empty-state">
+        <span>Hubo un problema al cargar tus notas</span>
+        Por favor, recarga la página o inténtalo más tarde.
+      </div>`;
       }
     }
 
-    init();
+    document.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
 
