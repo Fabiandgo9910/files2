@@ -1,11 +1,18 @@
 // api/notes.js
 // Endpoint serverless de Vercel para la Pizarra de notas.
-// Usa Vercel Postgres (@vercel/postgres). Las credenciales se inyectan
-// automáticamente como variables de entorno cuando conectas la base
-// de datos a tu proyecto desde el dashboard de Vercel (Storage → Postgres).
+//
+// Usa el driver HTTP de Neon (@neondatabase/serverless). Neon es el
+// proveedor de Postgres que se instala desde el Marketplace de Vercel
+// (Storage → Connect Database → Neon). La integración inyecta
+// automáticamente la variable de entorno DATABASE_URL en tu proyecto.
 
-import { sql } from '@vercel/postgres';
+import { neon } from '@neondatabase/serverless';
 import { randomUUID } from 'crypto';
+
+// Neon también deja algunas variables "legacy" con el prefijo POSTGRES_
+// por compatibilidad; comprobamos ambas por si acaso.
+const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const sql = neon(connectionString);
 
 // Crea la tabla si aún no existe. Es barato gracias a "IF NOT EXISTS",
 // así que la llamamos al inicio de cada petición y nos olvidamos de
@@ -38,6 +45,13 @@ function rowToNote(row) {
 }
 
 export default async function handler(req, res) {
+  if (!connectionString) {
+    console.error('Falta DATABASE_URL / POSTGRES_URL: la base de datos no está conectada a este proyecto.');
+    return res.status(500).json({
+      error: 'La base de datos no está conectada. Ve a Storage → Connect Database en el dashboard de Vercel.',
+    });
+  }
+
   try {
     await ensureTable();
     const { method, query, body } = req;
@@ -45,7 +59,7 @@ export default async function handler(req, res) {
 
     // --- LISTAR TODAS LAS NOTAS ---------------------------------------
     if (method === 'GET') {
-      const { rows } = await sql`SELECT * FROM notes ORDER BY created_at DESC`;
+      const rows = await sql`SELECT * FROM notes ORDER BY created_at DESC`;
       return res.status(200).json(rows.map(rowToNote));
     }
 
@@ -56,7 +70,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'El contenido es obligatorio' });
       }
       const newId = randomUUID();
-      const { rows } = await sql`
+      const rows = await sql`
         INSERT INTO notes (id, title, content, reminder, color, alerted)
         VALUES (${newId}, ${title || null}, ${content}, ${reminder || null}, ${color || 'y'}, false)
         RETURNING *;
@@ -72,7 +86,7 @@ export default async function handler(req, res) {
       // marcar la nota como "ya notificada", sin reenviar todo el resto.
       const keys = Object.keys(body || {});
       if (keys.length === 1 && keys[0] === 'alerted') {
-        const { rows } = await sql`
+        const rows = await sql`
           UPDATE notes SET alerted = ${body.alerted} WHERE id = ${id} RETURNING *;
         `;
         if (rows.length === 0) return res.status(404).json({ error: 'Nota no encontrada' });
@@ -84,7 +98,7 @@ export default async function handler(req, res) {
       if (!content || !content.trim()) {
         return res.status(400).json({ error: 'El contenido es obligatorio' });
       }
-      const { rows } = await sql`
+      const rows = await sql`
         UPDATE notes SET
           title = ${title || null},
           content = ${content},

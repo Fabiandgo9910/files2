@@ -38,16 +38,24 @@ git push -u origin main
    aún no hay base de datos conectada — es normal, se arregla en el
    siguiente paso.
 
-## 3. Crea y conecta la base de datos Postgres
+## 3. Crea y conecta la base de datos (Neon, vía Marketplace)
+
+El botón "Vercel Postgres" ya no existe: Vercel lo retiró en diciembre
+de 2024 y las bases de datos ahora se instalan desde el **Marketplace**.
+El proveedor recomendado (y el que usa este proyecto) es **Neon**.
 
 1. Dentro del proyecto en Vercel, ve a la pestaña **Storage**.
-2. **Create Database → Postgres** (está construido sobre Neon; el plan
-   gratuito es suficiente para esta app).
-3. Cuando te lo pida, **conecta la base de datos a tu proyecto**. Esto
-   añade automáticamente las variables de entorno (`POSTGRES_URL`, etc.)
-   que usa `@vercel/postgres` — no tienes que copiarlas a mano.
-4. Ve a **Deployments** y haz **Redeploy** del último despliegue para que
-   tome las nuevas variables de entorno.
+2. Pulsa **Connect Database** (o **Create Database**, según la versión
+   del dashboard).
+3. En el Marketplace, elige **Neon** → **Continue** → sigue el asistente
+   (nombre de la base de datos, región, plan gratuito).
+4. Cuando termine, **conéctala a tu proyecto**. Esto añade
+   automáticamente la variable de entorno `DATABASE_URL` (y algunas
+   variantes `POSTGRES_*` heredadas) que usa `@neondatabase/serverless`
+   — no tienes que copiar nada a mano.
+5. Ve a **Deployments** y haz **Redeploy** del último despliegue para que
+   la función tome esas variables de entorno nuevas (los despliegues ya
+   existentes no las ven hasta que se vuelven a construir).
 
 No necesitas ejecutar ningún script SQL: la función `api/notes.js` crea
 la tabla `notes` sola la primera vez que se llama (`CREATE TABLE IF NOT
