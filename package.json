@@ -1,0 +1,10 @@
+{
+  "name": "pizarra-notas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pizarra de notas adhesivas con backend serverless en Vercel y base de datos Postgres.",
+  "dependencies": {
+    "@vercel/postgres": "^0.10.0"
+  }
+}
