@@ -149,6 +149,32 @@
       color: #a39c8f;
     }
 
+    /* Botón de limpiar todo en cabecera */
+    .btn-clear-all {
+      background: transparent;
+      border: 1.5px solid var(--danger);
+      color: var(--danger);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .btn-clear-all:hover {
+      background: var(--danger);
+      color: #fffaf3;
+    }
+
+    .btn-clear-all svg {
+      width: 15px;
+      height: 15px;
+    }
+
     /* =========================================================
      TABLERO — grid de post-its
      ========================================================= */
@@ -567,6 +593,16 @@
         min-height: 150px;
         padding: 18px 12px 12px;
       }
+
+      .header-row {
+        gap: 10px;
+      }
+
+      .btn-clear-all {
+        width: 100%;
+        justify-content: center;
+        order: 3;
+      }
     }
   </style>
 </head>
@@ -583,6 +619,16 @@
         </svg>
         <input type="text" id="search" placeholder="Buscar por título o contenido…" autocomplete="off">
       </div>
+      <button class="btn-clear-all" id="btn-clear-all" title="Eliminar todas las notas de la pizarra">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          <line x1="10" y1="11" x2="10" y2="17"></line>
+          <line x1="14" y1="11" x2="14" y2="17"></line>
+        </svg>
+        Eliminar todo
+      </button>
       <span class="count-pill" id="count-pill">0 notas</span>
     </div>
   </header>
@@ -883,6 +929,7 @@
     function render() {
       const board = document.getElementById('board');
       const term = normalize(currentSearch);
+      const clearAllBtn = document.getElementById('btn-clear-all');
 
       const visible = notes.filter(n => {
         if (!term) return true;
@@ -898,6 +945,13 @@
 
       document.getElementById('count-pill').textContent =
         `${visible.length} nota${visible.length === 1 ? '' : 's'}` + (term ? ` (de ${notes.length})` : '');
+
+      // Ocultar/mostrar botón de limpiar todo dependiendo de si hay notas cargadas
+      if (notes.length === 0) {
+        clearAllBtn.style.display = 'none';
+      } else {
+        clearAllBtn.style.display = 'flex';
+      }
 
       if (visible.length === 0) {
         board.innerHTML = `
@@ -1071,7 +1125,7 @@
     });
 
     /* ============================================================
-       ELIMINAR NOTA — confirmación rápida limpia
+       ELIMINAR NOTA 
        ============================================================ */
     async function deleteNote(id) {
       const note = notes.find(n => n.id === id);
@@ -1089,6 +1143,37 @@
         await systemAlert('Error', 'No se pudo eliminar la nota. Inténtalo de nuevo.');
       }
     }
+
+    /* ============================================================
+       ELIMINAR TODAS LAS NOTAS (VACIAR PIZARRA)
+       ============================================================ */
+    async function clearAllNotes() {
+      const confirmed = await systemConfirm(
+        '⚠️ ¿Eliminar TODAS las notas?',
+        `Estás a punto de vaciar por completo tu pizarra (${notes.length} notas). Esta acción es definitiva y no se puede deshacer.`
+      );
+      if (!confirmed) return;
+
+      // Doble confirmación por seguridad
+      const finalConfirmed = await systemConfirm(
+        '🚨 Confirmación Final',
+        '¿De verdad quieres borrar absolutamente TODO de la base de datos?'
+      );
+      if (!finalConfirmed) return;
+
+      try {
+        // Ejecuta la eliminación en paralelo en la base de datos
+        await Promise.all(notes.map(n => apiDeleteNote(n.id)));
+        notes = [];
+        render();
+        await systemAlert('Pizarra vaciada', 'Todas las notas han sido eliminadas correctamente.');
+      } catch (err) {
+        console.error(err);
+        await systemAlert('Error', 'Hubo problemas para eliminar algunas notas de la base de datos. Por favor, refresca la página.');
+      }
+    }
+
+    document.getElementById('btn-clear-all').addEventListener('click', clearAllNotes);
 
     /* ============================================================
        SISTEMA DE RECORDATORIOS
