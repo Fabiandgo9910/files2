@@ -659,6 +659,10 @@
     let currentSearch = '';
     let editingId = null;
 
+    // Controladores globales de bucles de alarma activos
+    let alarmSoundInterval = null;
+    let keepSpeakingVoice = false;
+
     // --- Capa de acceso a la API -------------------------------------------
 
     async function apiGetNotes() {
@@ -710,6 +714,9 @@
         dOverlay.classList.add('open');
 
         const handleConfirm = () => {
+          // DETENER ALARMA DE MANERA ABSOLUTA AL CERRAR
+          stopReminderAlarm();
+
           dOverlay.classList.remove('open');
           confirmBtn.removeEventListener('click', handleConfirm);
           resolve();
@@ -753,62 +760,102 @@
     }
 
     /* ============================================================
-       SINTETIZADOR DE SONIDO (ALARMA RUIDOSA Y REPETITIVA)
+       SINTETIZADOR DE SONIDO (ALARMA EN BUCLE)
        ============================================================ */
-    function playReminderSound() {
+    function startReminderSoundLoop() {
+      // Evita duplicar el bucle si ya hay uno sonando
+      if (alarmSoundInterval) return;
+
       try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         if (!AudioContext) return;
         const ctx = new AudioContext();
 
-        // Alarma estridente tipo zumbador (Ondas sawtooth de volumen alto)
-        const duration = 0.15;
-        const playBeep = (delay, freq) => {
-          const startTime = ctx.currentTime + delay;
-          const osc = ctx.createOscillator();
-          const gainNode = ctx.createGain();
+        const playBeepSeq = () => {
+          const duration = 0.15;
+          const playBeep = (delay, freq) => {
+            const startTime = ctx.currentTime + delay;
+            const osc = ctx.createOscillator();
+            const gainNode = ctx.createGain();
 
-          osc.type = 'sawtooth';
-          osc.frequency.setValueAtTime(freq, startTime);
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(freq, startTime);
 
-          gainNode.gain.setValueAtTime(0.4, startTime); // Sube el volumen considerablemente
-          gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+            gainNode.gain.setValueAtTime(0.4, startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
 
-          osc.connect(gainNode);
-          gainNode.connect(ctx.destination);
+            osc.connect(gainNode);
+            gainNode.connect(ctx.destination);
 
-          osc.start(startTime);
-          osc.stop(startTime + duration);
+            osc.start(startTime);
+            osc.stop(startTime + duration);
+          };
+
+          // Doble pitido ruidoso
+          playBeep(0.0, 950);
+          playBeep(0.1, 750);
         };
 
-        // Secuencia intermitente de alerta rápida de tonos altos y bajos (tres beeps dobles)
-        playBeep(0.0, 950);
-        playBeep(0.1, 750);
-
-        playBeep(0.3, 950);
-        playBeep(0.4, 750);
-
-        playBeep(0.6, 950);
-        playBeep(0.7, 750);
+        // Suena inmediatamente y luego repite cada segundo
+        playBeepSeq();
+        alarmSoundInterval = setInterval(playBeepSeq, 1000);
 
       } catch (e) {
-        console.warn("La reproducción de sonido fue bloqueada o no es soportada:", e);
+        console.warn("La reproducción de sonido fue bloqueada:", e);
       }
     }
 
     /* ============================================================
-       SINTETIZADOR DE VOZ (TEXT-TO-SPEECH)
+       SINTETIZADOR DE VOZ (LECTURA EN BUCLE INFINITO)
        ============================================================ */
-    function speakReminderText() {
-      if ('speechSynthesis' in window) {
-        // Cancela cualquier locución previa activa para evitar solapamientos
-        window.speechSynthesis.cancel();
+    function startSpeechLoop() {
+      if (!('speechSynthesis' in window)) return;
+
+      keepSpeakingVoice = true;
+      window.speechSynthesis.cancel(); // Limpiar colas residuales
+
+      const speak = () => {
+        if (!keepSpeakingVoice) return;
 
         const utterance = new SpeechSynthesisUtterance("Tienes una nota pendiente de leer");
         utterance.lang = 'es-ES';
-        utterance.rate = 0.95; // Velocidad ligeramente pausada para claridad
+        utterance.rate = 1.0;
         utterance.pitch = 1.0;
+
+        // Al terminar de hablar, si no se ha cerrado el modal, vuelve a dispararse
+        utterance.onend = () => {
+          if (keepSpeakingVoice) {
+            // Un pequeño retardo de 800ms entre frases para que no se solape toscamente
+            setTimeout(speak, 800);
+          }
+        };
+
+        utterance.onerror = () => {
+          if (keepSpeakingVoice) {
+            setTimeout(speak, 1000);
+          }
+        };
+
         window.speechSynthesis.speak(utterance);
+      };
+
+      speak();
+    }
+
+    /* ============================================================
+       DETENCIÓN DE TODA LA ALERTA (AL HACER CLIC EN ACEPTAR)
+       ============================================================ */
+    function stopReminderAlarm() {
+      // 1. Apagar bucle de sonido
+      if (alarmSoundInterval) {
+        clearInterval(alarmSoundInterval);
+        alarmSoundInterval = null;
+      }
+
+      // 2. Apagar bucle de voz
+      keepSpeakingVoice = false;
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
     }
 
@@ -1070,21 +1117,19 @@
       const label = note.title || note.content.slice(0, 40);
       const when = minutes >= 60 ? '1 hora' : `${minutes} min`;
 
-      // 1. Alarma ruidosa
-      playReminderSound();
+      // INICIAR LOS BUCLES PERSISTENTES (AUDIO Y VOZ)
+      startReminderSoundLoop();
+      startSpeechLoop();
 
-      // 2. Lee el texto solicitado por voz
-      speakReminderText();
-
-      // 3. Notificación en Toast de pantalla (persiste si estás fuera de la pestaña)
+      // Notificación en Toast de pantalla
       showToast(label, when);
 
-      // 4. Notificación Nativa de escritorio (para alertar al usuario si está en otra app o pestaña)
+      // Notificación Nativa de escritorio
       if (document.visibilityState !== 'visible' && 'Notification' in window && Notification.permission === 'granted') {
         const nativeNotify = new Notification('⏰ Tienes una nota pendiente de leer', {
           body: `La nota "${label}" vence en ${when}.`,
           icon: '/favicon.png',
-          requireInteraction: true // <--- Hace que no desaparezca en Windows/Mac/Linux hasta interactuar
+          requireInteraction: true
         });
         nativeNotify.onclick = () => {
           window.focus();
@@ -1092,7 +1137,7 @@
         };
       }
 
-      // 5. Alerta Modal clásica rediseñada
+      // Alerta Modal clásica rediseñada (Al presionar "Aceptar" detendrá el bucle)
       await systemAlert('⏰ Recordatorio próximo', `La nota "${label}" vence en aproximadamente ${when}.`);
     }
 
@@ -1102,12 +1147,9 @@
       toast.className = 'toast';
       toast.innerHTML = `<strong>⏰ Vence en ${when}</strong>${escapeHtml(label)}<br><small style="font-size:0.7rem; opacity:0.75;">(Clic para cerrar)</small>`;
 
-      // El usuario puede hacer clic para cerrarlo en cualquier momento
       toast.addEventListener('click', () => toast.remove());
       stack.appendChild(toast);
 
-      // Persistencia inteligente: si la pestaña está oculta, el toast NO se autodestruye.
-      // Esperará a que abras de nuevo la pestaña para contar los 10 segundos antes de borrarse.
       const startDismissTimer = () => {
         setTimeout(() => {
           if (toast.parentNode) toast.remove();
@@ -1133,7 +1175,6 @@
       const board = document.getElementById('board');
       board.innerHTML = `<div class="empty-state"><span>Cargando pizarra…</span></div>`;
 
-      // Solicitar permisos de notificación nativos
       if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission();
       }
