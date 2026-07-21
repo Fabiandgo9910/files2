@@ -936,12 +936,8 @@
         return normalize(n.title).includes(term) || normalize(n.content).includes(term);
       });
 
-      visible.sort((a, b) => {
-        if (a.reminder && b.reminder) return new Date(a.reminder) - new Date(b.reminder);
-        if (a.reminder) return -1;
-        if (b.reminder) return 1;
-        return new Date(b.createdAt) - new Date(a.createdAt);
-      });
+      // Orden: nota creada más recientemente primero
+      visible.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
       document.getElementById('count-pill').textContent =
         `${visible.length} nota${visible.length === 1 ? '' : 's'}` + (term ? ` (de ${notes.length})` : '');
