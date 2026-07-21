@@ -1280,6 +1280,43 @@
     }
 
     document.addEventListener('DOMContentLoaded', init);
+
+    /* ============================================================
+       SINCRONIZACIÓN ENTRE DISPOSITIVOS
+       Como el tablero vive en una base de datos compartida, otro
+       ordenador puede crear/editar/borrar notas en cualquier momento.
+       Para que se vean sin tener que recargar la página, consultamos
+       el servidor periódicamente y solo volvemos a pintar el tablero
+       si algo ha cambiado de verdad (evita parpadeos innecesarios).
+       ============================================================ */
+    const SYNC_INTERVAL_MS = 6 * 1000; // cada 6 segundos
+
+    async function syncWithServer() {
+      // No sincronizamos mientras el usuario está creando/editando una
+      // nota: no queremos pisarle el formulario a mitad de escritura.
+      if (overlay.classList.contains('open')) return;
+
+      try {
+        const fresh = await apiGetNotes();
+        if (JSON.stringify(fresh) !== JSON.stringify(notes)) {
+          notes = fresh;
+          render();
+          checkReminders();
+        }
+      } catch (err) {
+        // Fallo silencioso: un corte de red momentáneo no debe
+        // interrumpir al usuario con alertas constantes.
+        console.error('No se pudo sincronizar con el servidor:', err);
+      }
+    }
+
+    setInterval(syncWithServer, SYNC_INTERVAL_MS);
+
+    // Sincroniza también en cuanto el usuario vuelve a la pestaña,
+    // para no tener que esperar al siguiente intervalo.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') syncWithServer();
+    });
   </script>
 </body>
 
