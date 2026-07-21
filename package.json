@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Pizarra de notas adhesivas con backend serverless en Vercel y base de datos Postgres.",
   "dependencies": {
-    "@neondatabase/serverless": "^0.10.0"
+    "@neondatabase/serverless": "^0.10.0",
+    "web-push": "^3.6.7"
   }
 }

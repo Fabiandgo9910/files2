@@ -1202,16 +1202,49 @@
     const ONE_HOUR_MS = 60 * 60 * 1000;
     const CHECK_INTERVAL_MS = 20 * 1000;
 
+    // Registro LOCAL (por dispositivo) de qué recordatorios ya sonaron aquí.
+    // Es independiente del flag "alerted" de la base de datos: ese es
+    // compartido y solo sirve para no duplicar el PUSH del servidor; este
+    // es propio de cada pantalla, para que el sonido suene en TODAS.
+    const LOCAL_ALERTED_KEY = 'pizarra_local_alerted';
+
+    function getLocalAlertedSet() {
+      try {
+        return new Set(JSON.parse(localStorage.getItem(LOCAL_ALERTED_KEY) || '[]'));
+      } catch (e) {
+        return new Set();
+      }
+    }
+
+    function markLocalAlerted(key) {
+      const set = getLocalAlertedSet();
+      set.add(key);
+      // Nos quedamos solo con las últimas 500 para que no crezca sin límite.
+      localStorage.setItem(LOCAL_ALERTED_KEY, JSON.stringify(Array.from(set).slice(-500)));
+    }
+
     function checkReminders() {
       const now = Date.now();
+      const localAlerted = getLocalAlertedSet();
 
       notes.forEach(note => {
-        if (!note.reminder || note.alerted) return;
+        if (!note.reminder) return;
 
         const diff = new Date(note.reminder).getTime() - now;
+        if (diff <= 0 || diff > ONE_HOUR_MS) return;
 
-        if (diff > 0 && diff <= ONE_HOUR_MS) {
-          showReminderAlert(note, diff);
+        // La clave incluye la fecha del recordatorio: si la nota se edita
+        // con una fecha nueva, se trata como un aviso distinto y puede
+        // volver a sonar aunque ya hubiera sonado antes con la fecha vieja.
+        const localKey = `${note.id}::${note.reminder}`;
+        if (localAlerted.has(localKey)) return; // este dispositivo ya avisó de esto
+
+        showReminderAlert(note, diff);
+        markLocalAlerted(localKey);
+
+        // El flag del servidor solo se usa para que el cron de notificaciones
+        // push no vuelva a mandar el aviso nativo una vez ya enviado una vez.
+        if (!note.alerted) {
           note.alerted = true;
           apiUpdateNote(note.id, { alerted: true }).catch(err => console.error(err));
         }
@@ -1281,9 +1314,7 @@
       const board = document.getElementById('board');
       board.innerHTML = `<div class="empty-state"><span>Cargando pizarra…</span></div>`;
 
-      if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
-      }
+      setupPushNotifications();
 
       try {
         notes = await apiGetNotes();
@@ -1374,6 +1405,63 @@
       installBtn.style.display = 'none';
       deferredInstallPrompt = null;
     });
+
+    /* ============================================================
+       NOTIFICACIONES PUSH REALES (Android, Windows, iOS)
+       Esta es la clave PÚBLICA VAPID: identifica a TU servidor ante
+       los servicios de notificación de cada navegador. No es un
+       secreto — puede vivir tranquilamente en el código del cliente.
+       La clave PRIVADA correspondiente vive solo en el servidor
+       (variable de entorno VAPID_PRIVATE_KEY) y nunca debe aparecer aquí.
+       ============================================================ */
+    const VAPID_PUBLIC_KEY = 'BAIkgAYeg6HZow03b2alZR7mdhYTi7yn89XMPm3aPOKtsUNLPPNMs9_1mdR8jKENBwE9gnzHqdbK6v8qCyPKuWo';
+
+    // Los navegadores piden la clave del servidor como un array de bytes,
+    // no como el texto base64url que usamos para transportarla.
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+      return outputArray;
+    }
+
+    async function setupPushNotifications() {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        return; // navegador sin soporte de push (raro hoy en día, pero por si acaso)
+      }
+
+      // Si el usuario ya lo denegó explícitamente antes, no insistimos.
+      if (Notification.permission === 'denied') return;
+
+      if (Notification.permission === 'default') {
+        const result = await Notification.requestPermission();
+        if (result !== 'granted') return;
+      }
+
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        let subscription = await registration.pushManager.getSubscription();
+
+        if (!subscription) {
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          });
+        }
+
+        // Le decimos al servidor "a partir de ahora, este dispositivo
+        // también quiere recibir avisos push".
+        await fetch('/api/push-subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subscription),
+        });
+      } catch (err) {
+        console.error('No se pudo activar las notificaciones push en este dispositivo:', err);
+      }
+    }
   </script>
 </body>
 

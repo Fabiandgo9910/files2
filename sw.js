@@ -64,3 +64,38 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// --- Recepción de una notificación push real desde el servidor -----------
+// Esto es lo que permite que el aviso llegue aunque la app esté cerrada:
+// el sistema operativo despierta este service worker solo para esto.
+self.addEventListener('push', (event) => {
+  let data = { title: '⏰ La Pizarra', body: 'Tienes un recordatorio pendiente.' };
+  try {
+    if (event.data) data = event.data.json();
+  } catch (e) {
+    if (event.data) data.body = event.data.text();
+  }
+
+  const options = {
+    body: data.body,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    vibrate: [200, 100, 200],
+    data: { url: '/' },
+  };
+
+  event.waitUntil(self.registration.showNotification(data.title, options));
+});
+
+// --- Al tocar la notificación: abre (o enfoca) la app ---------------------
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow('/');
+    })
+  );
+});
